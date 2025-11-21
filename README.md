@@ -496,15 +496,18 @@ ID_HEX|JAPONÊS|TRADUÇÃO|NOTAS
 
 | Métrica | Valor |
 |---|---|
-| ROM original | 319.436.800 bytes |
+| ROM original | 319.436.800 bytes (319 MB) |
 | Textos extraídos | 91.548 |
-| Textos traduzidos | 58.792 (64.2% cobertura) |
+| Textos traduzidos | 89.187 (97.42% cobertura) |
+| Textos pendentes de revisão | 2.361 (2.58%) |
 | Taxa Huffman encoding | 99.97% sucesso |
 | Textos com erro | ~19 (caracteres especiais) |
 | Tempo de extração | 2-5 min |
 | Tempo de injeção | 5-15 min |
 | Arquivo CSV de tradução | 3.3 MB |
-| Relatório de mapeamento | 7.8 MB |
+| Arquivo de mapeamento (offsets) | 7.8 MB (122.126 linhas) |
+| Extração completa (JSON) | ~100 MB |
+| Extração completa (TXT legível) | 38.1 MB |
 
 ---
 
