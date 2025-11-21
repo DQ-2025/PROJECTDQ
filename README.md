@@ -520,10 +520,22 @@ ID_HEX|JAPONÊS|TRADUÇÃO|NOTAS
 
 1. ✅ Extrair textos → **FEITO** (`dq4_extractor_with_mapping.py`)
 2. ✅ Gerar CSV → **FEITO** (`generate_translation_csv.py`)
-3. ⏳ Preencher CSV com traduções → **VOCÊ FAZ** (Excel/LibreOffice)
-4. ⏳ Validar traduções → **RUN** `carregar_traducoes.py`
-5. ⏳ Injetar na ROM → **RUN** `dq4_advanced_real_injector.py`
+3. ✅ Preencher CSV com traduções → **FEITO** (`translation_files/dq4_translation_csv_limpo.csv`)
+    - **Observação:** A tradução já está presente no arquivo `translation_files/dq4_translation_csv_limpo.csv`.
+    - **Quantidade traduzida:** 58.792 textos (de um total de 91.548). Alguns textos ainda precisam de revisão e correção.
+4. ⏳ Validar traduções → **RUN** `carregar_traducoes.py` (revisar resultados das validações)
+5. ⏳ Injetar na ROM → **PENDENTE (ferramenta injetora faltando)**
+    - Observação: O que falta para concluir o projeto é a implementação/conclusão da ferramenta injetora (responsável por codificar com Huffman e escrever os textos de volta na ROM).
 6. ⏳ Testar em emulador PS1 → **PASSO FINAL**
+
+## **Progresso Atual**
+
+- **Traduções:** Concluídas e armazenadas em `translation_files/dq4_translation_csv_limpo.csv`.
+- **Quantidade traduzida:** 58.792 textos traduzidos (cobertura ~64.2%). Existem alguns textos que não foram traduzidos corretamente e precisam de revisão.
+- **Extração completa decodificada:** Está disponível na pasta `tools_output` — arquivo principal com o mapeamento de offsets:
+  - `C:\Users\PL\Downloads\PROJECTDQ\tools_output\dq4_address_mapping.csv`
+- **O que falta:** Desenvolver/concluir a ferramenta injetora para reinserir as traduções (Huffman encoder / injection tool). Após isso, será possível gerar a ROM traduzida final e testar em emulador.
+
 
 ---
 
