@@ -1,0 +1,323 @@
+from libs.shiftjis import decodeShiftJIS, encodeShiftJIS
+from libs.helpers import printHex, compHex
+
+def parseTree( switch, offset, curNode, bytes):
+    index = curNode * 2 + ( offset if switch else 0 )
+    hByte = bytes[ index + 1 ]
+    lByte = bytes[ index ]
+
+    # If we have a node
+    if( (hByte&0xF0) == 0x80 ):
+        node = (hByte << 8) + lByte - 0x8000
+        # Create a new node
+        temp = [None,None]
+        temp[0] = parseTree( 0, offset, node, bytes)
+        temp[1] = parseTree( 1, offset, node, bytes)
+        return temp
+    elif( hByte == 0x7F or hByte == 0x7E ):
+        return "{%02x%02x}" % (hByte, lByte)
+    elif(hByte == 0 and lByte == 0):
+        return "{0000}"
+    else:
+        hByte += 0x80
+        encLetter = (hByte << 8) + lByte
+        return decodeShiftJIS( encLetter )
+
+
+def makeHuffTree( rawHuff ):
+    root = [None,None]
+    # Last two bytes are just zeros
+    rawHuff = list(rawHuff)[:-2]
+    raw_length = len(rawHuff)
+    half = int(raw_length / 2)
+
+    # Calculate the root node
+    lByte = rawHuff[ raw_length - 2 ] + ( rawHuff[ raw_length - 1 ] << 8 )
+    rootNode = 1 + lByte - 0x8000
+
+    root[0] = parseTree( 0, half, rootNode,  rawHuff )
+    root[1] = parseTree( 1, half, rootNode,  rawHuff )
+
+    return root
+
+def decodeHuffman( offset, code, huff ):
+    dText = ""
+    dialog = []
+    tempTree = huff
+    byte_idx = 0
+    start = offset
+    startBit = 0
+    for byte in code:
+        # Count down from the end
+        for i in range(8):
+            # extremely confusing bit of logic, but it just checks if the bit is a 1 or a 0
+            code = 1 if (byte & (1 << i) > 0) else 0
+            # if we have a list we have to go further...
+            if( type(tempTree[code]) == list ):
+                tempTree = tempTree[code]
+            else:
+                dText = ''.join([dText,tempTree[code]])
+                if( tempTree[code] == '{0000}' ):
+                    bitOffset = start * 8 + startBit
+                    dialog.append( {'text':dText,'offset':'0x%04X' % bitOffset} ) 
+                    dText = ""
+                    start = byte_idx + offset
+                    startBit = i+1
+                tempTree = huff
+        byte_idx += 1
+    return dialog
+
+def genFreqTable( text ):
+    ft = {}
+    isControl = False
+    ctrlBuff = ''
+    for char in text:
+        if char == '{':
+            isControl = True
+            continue
+        elif char == '}':
+            isControl = False
+            if ctrlBuff in ft:
+                ft[ctrlBuff] += 1
+            else:
+                ft[ctrlBuff] = 1
+            ctrlBuff = ''
+            continue
+        
+        if isControl:
+            ctrlBuff += char
+            continue
+
+        if char in ft:
+            ft[char] += 1
+        else:
+            ft[char] = 1
+    return ft
+
+def createNode( ft, num ):
+    # Get the first minimum
+    min1k = min( ft, key=ft.get )
+    min1v = ft[min1k]
+    del ft[min1k]
+    # Get the second minimum
+    min2k = min( ft, key=ft.get )
+    min2v = ft[min2k]
+    del ft[min2k]
+    # Create node
+    node = {min1k:min1v,min2k:min2v}
+    ft[num] = min1v + min2v
+    return [ft,node]
+
+def bitStr2Bytes(s):
+    l = int( len(s) / 8 + (0 if (len(s) % 8 == 0) else 1) )
+    while l % 4 != 0:
+        l += 1
+    
+    data = bytearray(l)
+    lh = len(s)
+
+    for i in range(0,lh,8):
+        bits = s[i:min(lh,i+8)]
+        while len(bits) != 8:
+            bits += '0'
+        v = int(bits[::-1],2)
+        data[int(i/8)] = v
+    return data
+
+def encTree( node, offset, tree, nodeNum=None ):
+    # if we're the root node
+    if nodeNum == None:
+        nodeNum = [*node][0]
+        node = node[nodeNum]
+        tree[-4] = nodeNum&0xFF
+        tree[-3] = 0x80 | (nodeNum>>8)
+    idx1 = nodeNum*2
+    idx2 = nodeNum*2 + offset
+
+    leafs = [*node]
+    if type(node[leafs[0]]) == dict:
+        tree[idx1] = leafs[0]&0xFF
+        tree[idx1+1] = 0x80 | (leafs[0]>>8)
+        tree = encTree( node[leafs[0]], offset, tree, nodeNum=leafs[0] )
+    elif len(leafs[0]) == 4:
+        tree[idx1] = int(leafs[0][2:],16)
+        tree[idx1+1] = int(leafs[0][:2],16)
+    else:
+        val = encodeShiftJIS( leafs[0] )
+        tree[idx1] = val[0]
+        tree[idx1+1] = val[1]
+    if len(leafs) > 1:
+        if type(node[leafs[1]]) == dict:
+            tree[idx2] = leafs[1]&0xFF
+            tree[idx2+1] = 0x80 | (leafs[1]>>8)
+            tree = encTree( node[leafs[1]], offset, tree, nodeNum=leafs[1] )
+        elif len(leafs[1]) == 4:
+            tree[idx2] = int(leafs[1][2:],16)
+            tree[idx2+1] = int(leafs[1][:2],16)
+        else:
+            val = encodeShiftJIS( leafs[1] )
+            tree[idx2] = val[0]
+            tree[idx2+1] = val[1]
+    return tree
+
+def encodeHuffman( text ):
+    huffTree = ""
+    nodes = {}
+    # Generate character frequency table
+    ft = genFreqTable( text )
+
+    # Create nodes using min-heap
+    nn = 0
+    while len(ft) != 1:
+        ft, nodes[nn] = createNode(ft, nn)
+        nn += 1
+
+    # Building Huffman Tree (using recursion)
+    def unpack(branch):
+        rt = {}
+        for n in [*branch]:
+            if type(n) == int:
+                rt[n] = unpack(nodes[n])
+            else:
+                rt[n] = branch[n]
+        return rt
+    ft = unpack(ft)
+
+    # Create the encoded huffman tree
+    rootNode = [*ft][0] + 1
+    tree = encTree( ft, rootNode*2, bytearray(rootNode*4) ) + b'\x00\x00'
+
+    ## Test to see if this works
+    #test = makeHuffTree( tree )
+    #print(test)
+
+    # Create codes for each character
+    def traverse(branch, curCode):
+        codeList = {}
+        stem = [*branch]
+        if type(stem[0]) == int:
+            codeList.update( traverse( branch[stem[0]], curCode+'0' ) )
+        else:
+            codeList[stem[0]] = curCode + '0'
+
+        if type(stem[1]) == int:
+            codeList.update( traverse( branch[stem[1]], curCode+'1' ) )
+        else:
+            codeList[stem[1]] = curCode + '1'
+        return codeList
+    codeList = traverse( list(ft.values())[0], '' )
+    
+    # Actually encode the string with our new codes
+    huffmanStr = ''
+    isControl = False
+    ctrlBuff = ''
+    for char in text:
+        if char == '{':
+            isControl = True
+            continue
+        elif char == '}':
+            isControl = False
+            huffmanStr += codeList[ctrlBuff]
+            ctrlBuff = ''
+            continue
+        if isControl:
+            ctrlBuff += char
+            continue
+        huffmanStr += codeList[char]
+    huffmanCode = bitStr2Bytes( huffmanStr )
+
+    return [huffmanCode, tree]
+
+
+def _build_code_map_from_tree(huff_tree):
+    """Retorna um dicionário símbolo -> bitstring a partir da estrutura retornada por makeHuffTree."""
+    code_map = {}
+
+    def walk(node, prefix):
+        # node é uma lista [left, right]
+        if type(node) != list:
+            return
+        left = node[0]
+        right = node[1]
+
+        # left
+        if type(left) == list:
+            walk(left, prefix + '0')
+        else:
+            key = left
+            # normalizar chaves de controle: '{7f04}' -> '7f04'
+            if isinstance(key, str) and key.startswith('{') and key.endswith('}'):
+                inner = key[1:-1]
+                code_map[inner] = prefix + '0'
+                code_map[key] = prefix + '0'
+            else:
+                code_map[key] = prefix + '0'
+
+        # right
+        if type(right) == list:
+            walk(right, prefix + '1')
+        else:
+            key = right
+            if isinstance(key, str) and key.startswith('{') and key.endswith('}'):
+                inner = key[1:-1]
+                code_map[inner] = prefix + '1'
+                code_map[key] = prefix + '1'
+            else:
+                code_map[key] = prefix + '1'
+
+    # huff_tree pode ser root = [left,right]
+    walk(huff_tree, '')
+    return code_map
+
+
+def encodeWithTree(huff_tree, text):
+    """Encode o texto usando a árvore Huffman existente (huff_tree é a estrutura retornada por makeHuffTree).
+
+    Retorna bytes codificados (bit-packed) - lança KeyError se algum símbolo não existir na árvore.
+    """
+    code_map = _build_code_map_from_tree(huff_tree)
+
+    # construir bitstring semelhante a encodeHuffman
+    huffmanStr = ''
+    isControl = False
+    ctrlBuff = ''
+    for ch in text:
+        if ch == '{':
+            isControl = True
+            ctrlBuff = ''
+            continue
+        elif ch == '}':
+            isControl = False
+            # key é ctrlBuff (sem chaves)
+            if ctrlBuff not in code_map:
+                # tentar com chaves
+                key = '{' + ctrlBuff + '}'
+                if key not in code_map:
+                    raise KeyError(f'Control token {{{ctrlBuff}}} não encontrado na árvore')
+                huffmanStr += code_map[key]
+            else:
+                huffmanStr += code_map[ctrlBuff]
+            ctrlBuff = ''
+            continue
+
+        if isControl:
+            ctrlBuff += ch
+            continue
+
+        # normal char
+        if ch not in code_map:
+            # tentar variantes (às vezes a árvore tem a forma de string diferente)
+            raise KeyError(f'Caractere {repr(ch)} não encontrado na árvore Huffman')
+        huffmanStr += code_map[ch]
+
+    # converter para bytes
+    huffmanCode = bitStr2Bytes(huffmanStr)
+    return huffmanCode
+
+'''
+sampleText = "{7f04}シンシアは　モシャスをとなえた！！{7f0b}{0000}Ye can't turn me down like that! Please!{7f0a}{7f02}'Tis forbidden to enter into the castle at night.{0000}"
+[encText, encTree] = encodeHuffman( sampleText )
+tree = makeHuffTree( encTree )
+text = decodeHuffman( 0, encText, tree )
+print( text )
+'''
